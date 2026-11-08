@@ -117,9 +117,11 @@ test('Anthropic stream relays text, thinking and usage with x-api-key auth', asy
   assert.equal(request.headers['anthropic-version'], '2023-06-01');
   assert.equal(request.headers.authorization, undefined);
   assert.equal(result.messages.map(message => str(message, 3)).join(''), 'Hello world');
-  assert.equal(result.messages.map(message => str(message, 9)).join(''), 'Considering');
-  assert.equal(result.messages.map(message => str(message, 10)).filter(Boolean).join(''), 'sig');
-  assert.equal(result.messages.map(message => str(message, 21)).filter(Boolean).join(''), 'anthropic');
+  const signed = result.messages.filter(message => str(message, 10));
+  assert.equal(signed.length, 1);
+  assert.equal(str(signed[0], 9), 'Considering');
+  assert.equal(str(signed[0], 10), 'sig');
+  assert.equal(str(signed[0], 21), 'sealed');
   assert.equal(result.metrics[0].status, 'success');
   assert.equal(result.metrics[0].inputTokens, 100);
   assert.equal(result.metrics[0].cachedTokens, 90);
@@ -136,9 +138,25 @@ test('Anthropic stream supplies a signature when the upstream thinking block has
     sse('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 2 } }),
     sse('message_stop', {}),
   ]);
-  assert.equal(result.messages.map(message => str(message, 9)).join(''), 'plan');
-  assert.equal(result.messages.map(message => str(message, 10)).filter(Boolean).join(''), '_');
-  assert.equal(result.messages.map(message => str(message, 21)).filter(Boolean).join(''), 'anthropic');
+  const signed = result.messages.filter(message => str(message, 10));
+  assert.equal(signed.length, 1);
+  assert.equal(str(signed[0], 9), 'plan');
+  assert.equal(str(signed[0], 10), '_');
+  assert.equal(str(signed[0], 21), 'sealed');
+});
+
+test('Anthropic replay keeps each thought and does not send the Devin signature placeholder upstream', () => {
+  const raw = Buffer.concat([
+    s(2, 'sys'), s(21, 'mcli-kimi'), v(6, 1),
+    nativeMessage(2, 'first', [s(11, 'abcdef'), s(12, '_')]),
+    nativeMessage(2, '', [s(11, 'cd'), s(12, 'real-sig')]),
+  ]);
+  const body = buildRequestBody(parseChat(raw), { model: 'kimi-k3.1-pro', effort: 'max' }, { apiFormat: 'anthropic' });
+  const thoughts = body.messages[0].content.filter(block => block.type === 'thinking');
+  assert.deepEqual(thoughts, [
+    { type: 'thinking', thinking: 'abcdef', signature: '' },
+    { type: 'thinking', thinking: 'cd', signature: 'real-sig' },
+  ]);
 });
 
 test('Anthropic stream assembles streamed and empty tool inputs in block order', async t => {

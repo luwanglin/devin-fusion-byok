@@ -75,13 +75,13 @@ function prefix(id) {
 }
 function textChunk(id, text) { return Buffer.concat([...prefix(id), s(3, text)]); }
 function thinkingChunk(id, text, signature) {
-  // Stream fields: 9 thinking text, 10 signature, 21 kind. Request history
-  // reads the same thought back from fields 11 and 12.
+  // Stream fields: 9 thinking text, 10 signature, 21 kind. Live traffic marks
+  // a signature "sealed"; Devin copies that kind when it writes request field 18.
   const parts = [...prefix(id)];
   if (text) parts.push(s(9, text));
   if (signature) {
     parts.push(s(10, signature));
-    parts.push(s(21, 'anthropic'));
+    parts.push(s(21, 'sealed'));
   }
   return Buffer.concat(parts);
 }

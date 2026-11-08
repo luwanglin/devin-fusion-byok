@@ -10,7 +10,15 @@ const wire = require('../protocol/wire.cjs');
 const { parseChat } = require('../protocol/chat.cjs');
 const { serveChat } = require('../protocol/responses.cjs');
 const { forward, collect } = require('./bridge.cjs');
-const PORT = Number(process.env.FUSION_BYOK_PORT || 39842);
+const LOCAL_BYOK_PORT = 39842;
+const REMOTE_BYOK_PORT = 39843;
+function byokPort(env = process.env) {
+  const raw = env.FUSION_BYOK_PORT;
+  if (raw == null || String(raw).trim() === '') return LOCAL_BYOK_PORT;
+  const port = Number(raw);
+  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : LOCAL_BYOK_PORT;
+}
+const PORT = byokPort();
 const VERSION = require('../../package.json').version;
 const API_PREFIX = '/exa.api_server_pb.ApiServerService/';
 const SERVICE = 'devin-fusion-byok';
@@ -234,4 +242,4 @@ if (require.main === module) {
     for (const name of ['SIGTERM', 'SIGINT']) process.on(name, () => backend.close().then(() => process.exit(0)));
   }).catch(error => { log('startup-error', { code: error.code === 'EADDRINUSE' ? 'port_in_use' : 'startup_failed' }); process.exit(error.code === 'EADDRINUSE' ? 0 : 1); });
 }
-module.exports = { startBackend, runtimeIdentity, controlFile, PORT, VERSION, MANAGEMENT_PROTOCOL };
+module.exports = { startBackend, runtimeIdentity, controlFile, PORT, LOCAL_BYOK_PORT, REMOTE_BYOK_PORT, byokPort, VERSION, MANAGEMENT_PROTOCOL };

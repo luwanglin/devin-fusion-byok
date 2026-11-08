@@ -95,7 +95,7 @@ function fixture(t) {
     './catalog.cjs': { normalizeFusionConfig: config => config,
       buildCatalog: config => ({ models: [], fusions: {}, presetStates: [], presetCandidates: { lead: [], sidekick: [] } }) },
     './runtime/native-models.cjs': { readNativeModels: async () => ({ status: 'empty', models: [] }) },
-    './runtime/backend.cjs': { runtimeIdentity: () => identity, controlFile: actualBackend.controlFile, PORT: 39842, MANAGEMENT_PROTOCOL: 1 },
+    './runtime/backend.cjs': { runtimeIdentity: () => identity, controlFile: actualBackend.controlFile, PORT: 39842, REMOTE_BYOK_PORT: 39843, MANAGEMENT_PROTOCOL: 1 },
     './runtime/bridge.cjs': { createLsBridge: async () => ({ port: 4567, close() {} }) },
     './runtime/ls-injection.cjs': { installLsInjection: async options => { await options.createBridge(1234); return { status: {}, dispose: async () => {} }; } },
     './runtime/goal-continue.cjs': loadWithStubbedVscode(goalSource, 'goal-continue.cjs', api),

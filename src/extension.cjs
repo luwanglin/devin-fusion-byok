@@ -9,7 +9,7 @@ const { createManager } = require('./panel/model.cjs');
 const { installLsInjection } = require('./runtime/ls-injection.cjs');
 const { createLsBridge } = require('./runtime/bridge.cjs');
 const { backendEnvironment } = require('./runtime/backend-env.cjs');
-const { runtimeIdentity, controlFile, PORT, MANAGEMENT_PROTOCOL } = require('./runtime/backend.cjs');
+const { runtimeIdentity, controlFile, PORT, REMOTE_BYOK_PORT, MANAGEMENT_PROTOCOL } = require('./runtime/backend.cjs');
 const { readReceipt, remember, saveReceipt, valueAt, restoreObject, permitted } = require('./lifecycle/owned-settings.cjs');
 const { readNativeModels } = require('./runtime/native-models.cjs');
 const { installAutoContinue } = require('./runtime/auto-continue.cjs');
@@ -176,7 +176,7 @@ async function activate(context) {
       const generation = remoteGeneration;
       // Remote Sidekick uses the pod's own LiteLLM via a BYOK backend on the pod.
       // Do not reverse-tunnel 39842 back to the Mac.
-      const podByokUrl = 'http://127.0.0.1:39843';
+      const podByokUrl = 'http://127.0.0.1:' + REMOTE_BYOK_PORT;
       if (nativeMain && !acpInjection) {
         try {
           const installed = await require('./runtime/acp-injection.cjs').installAcpInjection({ nativeMainPath: nativeMain,

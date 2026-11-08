@@ -31,6 +31,19 @@ function toolInput(args) {
   } catch { return {}; }
 }
 
+// "_" is only a Devin stream placeholder. mcli keeps replayed thinking when the
+// signature is empty; a sentinel must not be sent upstream.
+function upstreamSignature(signature) {
+  return signature && signature !== '_' ? signature : '';
+}
+
+function placeThinking(content, block) {
+  const same = content.find(item => item.type === 'thinking' && item.thinking === block.thinking && item.signature === block.signature);
+  if (same) return;
+  const firstOther = content.findIndex(item => item.type !== 'thinking');
+  content.splice(firstOther === -1 ? content.length : firstOther, 0, block);
+}
+
 function buildAnthropicBody(request, route, provider) {
   const system = request.systemPrompt ? [request.systemPrompt] : [];
   const messages = [];
@@ -53,7 +66,7 @@ function buildAnthropicBody(request, route, provider) {
       // them makes the next turn answer with the single character 空.
       const blocks = [];
       if (message.thinking) {
-        blocks.push({ type: 'thinking', thinking: message.thinking, signature: message.signature || '' });
+        blocks.push({ type: 'thinking', thinking: message.thinking, signature: upstreamSignature(message.signature) });
       }
       blocks.push(...textBlocks(message));
       for (const tool of message.toolCalls || []) {
@@ -61,15 +74,10 @@ function buildAnthropicBody(request, route, provider) {
       }
       const last = messages.at(-1);
       if (last?.role === 'assistant') {
-        const thinking = blocks.find(block => block.type === 'thinking');
-        const rest = blocks.filter(block => block.type !== 'thinking');
-        const existing = last.content.find(block => block.type === 'thinking');
-        if (thinking && !existing) last.content.unshift(thinking);
-        else if (thinking && existing && thinking.thinking && !existing.thinking.includes(thinking.thinking)) {
-          existing.thinking += thinking.thinking;
-          if (thinking.signature) existing.signature = thinking.signature;
+        for (const block of blocks) {
+          if (block.type === 'thinking') placeThinking(last.content, block);
+          else last.content.push(block);
         }
-        last.content.push(...rest);
       } else if (blocks.length) {
         messages.push({ role: 'assistant', content: blocks });
       }
@@ -122,11 +130,8 @@ function createAnthropicAdapter() {
         const index = data.index ?? 0;
         if (block.type === 'text') return block.text ? [chunk(event.type, { content: block.text })] : [];
         if (block.type === 'thinking') {
-          blocks.set(index, { kind: 'thinking', signed: Boolean(block.signature) });
-          const out = [];
-          if (block.thinking) out.push(chunk(event.type, { reasoning_content: block.thinking }));
-          if (block.signature) out.push(chunk(event.type, { reasoning_signature: block.signature }));
-          return out;
+          blocks.set(index, { kind: 'thinking', text: block.thinking || '', signature: block.signature || '' });
+          return [];
         }
         if (block.type !== 'tool_use') return [];
         const input = block.input && typeof block.input === 'object' && Object.keys(block.input).length ? JSON.stringify(block.input) : '';
@@ -137,11 +142,15 @@ function createAnthropicAdapter() {
         const delta = data.delta || {};
         const index = data.index ?? 0;
         if (delta.type === 'text_delta' && delta.text) return [chunk(event.type, { content: delta.text })];
-        if (delta.type === 'thinking_delta' && delta.thinking) return [chunk(event.type, { reasoning_content: delta.thinking })];
+        if (delta.type === 'thinking_delta' && delta.thinking) {
+          const state = blocks.get(index);
+          if (state?.kind === 'thinking') state.text += delta.thinking;
+          return [];
+        }
         if (delta.type === 'signature_delta' && delta.signature) {
           const state = blocks.get(index);
-          if (state?.kind === 'thinking') state.signed = true;
-          return [chunk(event.type, { reasoning_signature: delta.signature })];
+          if (state?.kind === 'thinking') state.signature = delta.signature;
+          return [];
         }
         if (delta.type === 'input_json_delta' && typeof delta.partial_json === 'string' && blocks.has(index)) {
           if (delta.partial_json) blocks.get(index).streamed = true;
@@ -151,16 +160,17 @@ function createAnthropicAdapter() {
       }
       case 'content_block_stop': {
         const index = data.index ?? 0;
-        const tool = blocks.get(index);
-        // mcli does not send signature_delta. Devin only keeps a thinking block
-        // for the next turn when the stream carries a signature.
-        if (tool?.kind === 'thinking') {
-          return tool.signed ? [] : [chunk(event.type, { reasoning_signature: '_' })];
+        const blockState = blocks.get(index);
+        // One frame carries the whole thought and its signature. A signature-only
+        // frame is stored as an empty thought, and the next turn then answers 空.
+        if (blockState?.kind === 'thinking') {
+          if (!blockState.text) return [];
+          return [chunk(event.type, { reasoning_content: blockState.text, reasoning_signature: blockState.signature || '_' })];
         }
         // A tool call without argument deltas still needs valid JSON arguments.
-        if (!tool || tool.streamed) return [];
-        tool.streamed = true;
-        return [toolDelta(event.type, index, { function: { arguments: tool.input || '{}' } })];
+        if (!blockState || blockState.streamed) return [];
+        blockState.streamed = true;
+        return [toolDelta(event.type, index, { function: { arguments: blockState.input || '{}' } })];
       }
       case 'message_delta': {
         readUsage(data.usage);

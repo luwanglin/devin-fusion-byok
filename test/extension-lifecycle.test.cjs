@@ -66,7 +66,7 @@ function fixture(t, initial = {}) {
       hostOptions = options;
       return { refresh: async () => { hostRefreshes++; }, dispose() {} };
     } },
-    './runtime/backend.cjs': { runtimeIdentity: () => identity, controlFile: actualBackend.controlFile, PORT: 39842, MANAGEMENT_PROTOCOL: 1 },
+    './runtime/backend.cjs': { runtimeIdentity: () => identity, controlFile: actualBackend.controlFile, PORT: 39842, REMOTE_BYOK_PORT: 39843, MANAGEMENT_PROTOCOL: 1 },
     './runtime/bridge.cjs': { createLsBridge: async (_port, options) => { bridges.push(options); return { port: 4567, close() {} }; } },
     './runtime/ls-injection.cjs': { installLsInjection: async options => {
       installed++; await options.createBridge(1234);
