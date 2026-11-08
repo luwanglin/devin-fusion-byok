@@ -101,13 +101,14 @@ function fixture(t, initial = {}) {
     settle: async (ticks = 20) => { for (let index = 0; index < ticks; index++) await next(); },
     counts: () => ({ installed, disposed }), remoteCounts: () => ({ remoteDisposed, remoteEnsured }), host: () => ({ options: hostOptions, refreshes: hostRefreshes }) };
 }
-test('remote window starts a tunnel and disables its own lifecycle without native extension', async t => {
+test('remote window keeps the pod BYOK backend and does not open a reverse tunnel', async t => {
   const f = fixture(t, { remote: true }); const active = await f.activate(f.context); await f.settle();
   assert.equal(f.globals.agentEnv['devin-cli'].WINDSURF_API_SERVER_URL, 'http://127.0.0.1:39842');
-  assert.equal(active.status().state, 'ready'); assert.equal(f.remoteCounts().remoteEnsured, 1);
+  assert.equal(active.status().state, 'unavailable');
+  assert.equal(f.remoteCounts().remoteEnsured, 0);
   assert.equal(f.host().options.nativeMainPath, null);
   await f.commands.get('devinFusionByok.disable')();
-  assert.equal(f.remoteCounts().remoteDisposed, 1);
+  assert.equal(f.remoteCounts().remoteDisposed, 0);
   assert.equal(f.globals.agentEnv['devin-cli'].WINDSURF_API_SERVER_URL, undefined);
 });
 test('activation and home edits refresh the host catalog, and disabled/unloaded hooks stop injecting', async t => {

@@ -74,7 +74,17 @@ function prefix(id) {
   return [s(1, id), m(2, Buffer.concat([v(1, Math.floor(now / 1000)), v(2, now % 1000 * 1000000)]))];
 }
 function textChunk(id, text) { return Buffer.concat([...prefix(id), s(3, text)]); }
-function thinkingChunk(id, text) { return Buffer.concat([...prefix(id), s(9, text)]); }
+function thinkingChunk(id, text, signature) {
+  // Stream fields: 9 thinking text, 10 signature, 21 kind. Request history
+  // reads the same thought back from fields 11 and 12.
+  const parts = [...prefix(id)];
+  if (text) parts.push(s(9, text));
+  if (signature) {
+    parts.push(s(10, signature));
+    parts.push(s(21, 'anthropic'));
+  }
+  return Buffer.concat(parts);
+}
 function toolChunk(id, tools) {
   return Buffer.concat([...prefix(id), ...tools.map(tool => m(6, Buffer.concat([s(1, tool.id), s(2, tool.name), s(3, tool.arguments ?? tool.arguments_json ?? '')])))]);
 }

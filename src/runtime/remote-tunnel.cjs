@@ -134,10 +134,16 @@ function createRemoteTunnelManager({ workspace, vscode, root, port = 39842, isEn
   };
 }
 function installRemoteSupport({ vscode, nativeMainPath, opensshMainPath, wslMainPath, root, port = 39842, isEnabled = () => true, log = () => {} }) {
-  const apiPath = opensshMainPath || wslMainPath || nativeMainPath;
-  if (!apiPath) throw new Error('remote_api_unavailable');
-  const workspace = createRequire(apiPath)('vscode').workspace;
-  const manager = createRemoteTunnelManager({ workspace, vscode, root, port, isEnabled, log });
+  const resolverPath = opensshMainPath || wslMainPath || nativeMainPath;
+  if (!resolverPath) throw new Error('remote_api_unavailable');
+  const resolverWorkspace = createRequire(resolverPath)('vscode').workspace;
+  let execWorkspace = resolverWorkspace;
+  if (typeof execWorkspace?.getRemoteExecServer !== 'function' && nativeMainPath) {
+    const nativeWorkspace = createRequire(nativeMainPath)('vscode').workspace;
+    if (typeof nativeWorkspace?.getRemoteExecServer === 'function') execWorkspace = nativeWorkspace;
+  }
+  if (typeof execWorkspace?.getRemoteExecServer !== 'function') throw new Error('getRemoteExecServer missing');
+  const manager = createRemoteTunnelManager({ workspace: execWorkspace, vscode, root, port, isEnabled, log });
   const restores = [];
   function wrap(obj, key, make) { const original = obj?.[key]; if (typeof original !== 'function') return; const descriptor = Object.getOwnPropertyDescriptor(obj, key), wrapper = make(original); obj[key] = wrapper; restores.push(() => { if (obj[key] === wrapper) { if (descriptor) Object.defineProperty(obj, key, descriptor); else delete obj[key]; } }); }
   if (opensshMainPath) {
@@ -148,7 +154,7 @@ function installRemoteSupport({ vscode, nativeMainPath, opensshMainPath, wslMain
       return Reflect.apply(original, this, [command, args, options, ...rest]);
     });
   }
-  const workspaces = new Set([workspace]);
+  const workspaces = new Set([resolverWorkspace]);
   if (wslMainPath) workspaces.add(createRequire(wslMainPath)('vscode').workspace);
   for (const targetWorkspace of workspaces) wrap(targetWorkspace, 'registerRemoteAuthorityResolver', original => function (prefix, resolver, ...rest) {
     if (['ssh-remote', 'wsl'].includes(prefix) && typeof resolver?.resolve === 'function') {

@@ -156,36 +156,31 @@ async function activate(context) {
         ? path.resolve(native.extensionPath, native.packageJSON.main) : null;
     } catch { return null; }
   })();
-  const opensshMain = (() => {
+  const resolveBundledMain = (extensionId, fallbackRelative) => {
     try {
-      const ext = vscode.extensions.getExtension('codeium.windsurf-remote-openssh');
-      if (ext?.extensionPath && ext.packageJSON?.main) return path.resolve(ext.extensionPath, ext.packageJSON.main);
-      const fallback = vscode.env?.appRoot && path.join(vscode.env.appRoot, 'extensions/windsurf-remote-openssh/dist/extension.js');
+      const ext = vscode.extensions.getExtension(extensionId);
+      let main = ext?.extensionPath && ext.packageJSON?.main ? path.resolve(ext.extensionPath, ext.packageJSON.main) : null;
+      // Devin's OpenSSH package.json main is "./dist/extension" while the file is extension.js.
+      if (main && !fs.existsSync(main) && fs.existsSync(main + '.js')) main += '.js';
+      if (main && fs.existsSync(main)) return main;
+      const fallback = vscode.env?.appRoot && path.join(vscode.env.appRoot, fallbackRelative);
       return fallback && fs.existsSync(fallback) ? fallback : null;
     } catch { return null; }
-  })();
-  const wslMain = (() => {
-    try {
-      const ext = vscode.extensions.getExtension('codeium.windsurf-remote-wsl');
-      if (ext?.extensionPath && ext.packageJSON?.main) return path.resolve(ext.extensionPath, ext.packageJSON.main);
-      const fallback = vscode.env?.appRoot && path.join(vscode.env.appRoot, 'extensions/windsurf-remote-wsl/dist/extension.js');
-      return fallback && fs.existsSync(fallback) ? fallback : null;
-    } catch { return null; }
-  })();
+  };
+  const opensshMain = resolveBundledMain('codeium.windsurf-remote-openssh', 'extensions/windsurf-remote-openssh/dist/extension.js');
+  const wslMain = resolveBundledMain('codeium.windsurf-remote-wsl', 'extensions/windsurf-remote-wsl/dist/extension.js');
   let remoteSupport, acpInjection, remoteInstall, remoteGeneration = 0;
   const startRemoteSupport = () => {
     if (remoteInstall) return remoteInstall;
     remoteInstall = (async () => {
       const generation = remoteGeneration;
-      if (!remoteSupport && (opensshMain || wslMain || nativeMain)) {
-        try { remoteSupport = require('./runtime/remote-tunnel.cjs').installRemoteSupport({ vscode, nativeMainPath: nativeMain,
-          opensshMainPath: opensshMain, wslMainPath: wslMain, root, isEnabled: () => !activationDisposed && config().enabled !== false, log }); }
-        catch { log('remote-support-unavailable'); }
-      }
-      if (nativeMain && remoteSupport && !acpInjection) {
+      // Remote Sidekick uses the pod's own LiteLLM via a BYOK backend on the pod.
+      // Do not reverse-tunnel 39842 back to the Mac.
+      const podByokUrl = 'http://127.0.0.1:39843';
+      if (nativeMain && !acpInjection) {
         try {
           const installed = await require('./runtime/acp-injection.cjs').installAcpInjection({ nativeMainPath: nativeMain,
-            apiServerUrl: 'http://127.0.0.1:' + PORT, resolveRemoteServerUrl: remoteSupport.resolveRemoteServerUrl, log });
+            apiServerUrl: 'http://127.0.0.1:' + PORT, resolveRemoteServerUrl: async () => podByokUrl, log });
           if (generation !== remoteGeneration || activationDisposed || config().enabled === false) installed.dispose(); else acpInjection = installed;
         }
         catch { log('acp-injection-unavailable'); }
@@ -398,7 +393,7 @@ async function activate(context) {
     connection = injected;
     startNativeSync();
     void hostCatalog?.refresh();
-    log('activated', { nativeVersion: native.packageJSON.version, storage: root });
+    log('activated', { nativeVersion: native.packageJSON.version, storage: root, remoteName: vscode.env?.remoteName || '' });
   }
   const run = fn => async () => { try { await fn(); } catch (error) {
     const safe = safeError(error);

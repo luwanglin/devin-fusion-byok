@@ -83,6 +83,19 @@ test('Anthropic request body maps system, images, tool calls, merged tool result
   assert.equal(body.temperature, undefined);
 });
 
+test('Anthropic request replays assistant thinking ahead of tool calls', () => {
+  const raw = Buffer.concat([
+    s(2, 'sys'), s(21, 'mcli-kimi'), v(6, 1),
+    nativeMessage(2, 'answer', [
+      s(11, 'look at the footage'), s(12, 'sig'),
+      m(6, Buffer.concat([s(1, 'call_a'), s(2, 'read'), s(3, '{}')])),
+    ]),
+  ]);
+  const body = buildRequestBody(parseChat(raw), { model: 'kimi-k3.1-pro', effort: 'max' }, { apiFormat: 'anthropic' });
+  assert.deepEqual(body.messages[0].content[0], { type: 'thinking', thinking: 'look at the footage', signature: 'sig' });
+  assert.equal(body.messages[0].content.at(-1).type, 'tool_use');
+});
+
 test('Anthropic stream relays text, thinking and usage with x-api-key auth', async t => {
   const result = await run(t, [
     sse('message_start', { message: { usage: { input_tokens: 10, cache_read_input_tokens: 90, cache_creation_input_tokens: 0, output_tokens: 1 } } }),
@@ -104,11 +117,28 @@ test('Anthropic stream relays text, thinking and usage with x-api-key auth', asy
   assert.equal(request.headers['anthropic-version'], '2023-06-01');
   assert.equal(request.headers.authorization, undefined);
   assert.equal(result.messages.map(message => str(message, 3)).join(''), 'Hello world');
+  assert.equal(result.messages.map(message => str(message, 9)).join(''), 'Considering');
+  assert.equal(result.messages.map(message => str(message, 10)).filter(Boolean).join(''), 'sig');
+  assert.equal(result.messages.map(message => str(message, 21)).filter(Boolean).join(''), 'anthropic');
   assert.equal(result.metrics[0].status, 'success');
   assert.equal(result.metrics[0].inputTokens, 100);
   assert.equal(result.metrics[0].cachedTokens, 90);
   assert.equal(result.metrics[0].outputTokens, 7);
   assert.equal(result.metrics[0].hasReasoning, true);
+});
+
+test('Anthropic stream supplies a signature when the upstream thinking block has none', async t => {
+  const result = await run(t, [
+    sse('message_start', { message: { usage: { input_tokens: 1, output_tokens: 1 } } }),
+    sse('content_block_start', { index: 0, content_block: { type: 'thinking', thinking: '' } }),
+    sse('content_block_delta', { index: 0, delta: { type: 'thinking_delta', thinking: 'plan' } }),
+    sse('content_block_stop', { index: 0 }),
+    sse('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 2 } }),
+    sse('message_stop', {}),
+  ]);
+  assert.equal(result.messages.map(message => str(message, 9)).join(''), 'plan');
+  assert.equal(result.messages.map(message => str(message, 10)).filter(Boolean).join(''), '_');
+  assert.equal(result.messages.map(message => str(message, 21)).filter(Boolean).join(''), 'anthropic');
 });
 
 test('Anthropic stream assembles streamed and empty tool inputs in block order', async t => {

@@ -49,8 +49,30 @@ function buildAnthropicBody(request, route, provider) {
       if (!messages.length) { if (message.content) system.push(message.content); }
       else push('user', message.content ? [{ type: 'text', text: message.content }] : []);
     } else if (message.role === 'assistant') {
-      push('assistant', [...textBlocks(message),
-        ...(message.toolCalls || []).map(tool => ({ type: 'tool_use', id: tool.id, name: tool.name, input: toolInput(tool.arguments) }))]);
+      // Kimi K3 was trained with every prior thinking block replayed. Dropping
+      // them makes the next turn answer with the single character 空.
+      const blocks = [];
+      if (message.thinking) {
+        blocks.push({ type: 'thinking', thinking: message.thinking, signature: message.signature || '' });
+      }
+      blocks.push(...textBlocks(message));
+      for (const tool of message.toolCalls || []) {
+        blocks.push({ type: 'tool_use', id: tool.id, name: tool.name, input: toolInput(tool.arguments) });
+      }
+      const last = messages.at(-1);
+      if (last?.role === 'assistant') {
+        const thinking = blocks.find(block => block.type === 'thinking');
+        const rest = blocks.filter(block => block.type !== 'thinking');
+        const existing = last.content.find(block => block.type === 'thinking');
+        if (thinking && !existing) last.content.unshift(thinking);
+        else if (thinking && existing && thinking.thinking && !existing.thinking.includes(thinking.thinking)) {
+          existing.thinking += thinking.thinking;
+          if (thinking.signature) existing.signature = thinking.signature;
+        }
+        last.content.push(...rest);
+      } else if (blocks.length) {
+        messages.push({ role: 'assistant', content: blocks });
+      }
     } else {
       push('user', textBlocks(message));
     }
@@ -99,7 +121,13 @@ function createAnthropicAdapter() {
         const block = data.content_block || {};
         const index = data.index ?? 0;
         if (block.type === 'text') return block.text ? [chunk(event.type, { content: block.text })] : [];
-        if (block.type === 'thinking') return block.thinking ? [chunk(event.type, { reasoning_content: block.thinking })] : [];
+        if (block.type === 'thinking') {
+          blocks.set(index, { kind: 'thinking', signed: Boolean(block.signature) });
+          const out = [];
+          if (block.thinking) out.push(chunk(event.type, { reasoning_content: block.thinking }));
+          if (block.signature) out.push(chunk(event.type, { reasoning_signature: block.signature }));
+          return out;
+        }
         if (block.type !== 'tool_use') return [];
         const input = block.input && typeof block.input === 'object' && Object.keys(block.input).length ? JSON.stringify(block.input) : '';
         blocks.set(index, { streamed: false, input });
@@ -110,6 +138,11 @@ function createAnthropicAdapter() {
         const index = data.index ?? 0;
         if (delta.type === 'text_delta' && delta.text) return [chunk(event.type, { content: delta.text })];
         if (delta.type === 'thinking_delta' && delta.thinking) return [chunk(event.type, { reasoning_content: delta.thinking })];
+        if (delta.type === 'signature_delta' && delta.signature) {
+          const state = blocks.get(index);
+          if (state?.kind === 'thinking') state.signed = true;
+          return [chunk(event.type, { reasoning_signature: delta.signature })];
+        }
         if (delta.type === 'input_json_delta' && typeof delta.partial_json === 'string' && blocks.has(index)) {
           if (delta.partial_json) blocks.get(index).streamed = true;
           return delta.partial_json ? [toolDelta(event.type, index, { function: { arguments: delta.partial_json } })] : [];
@@ -119,6 +152,11 @@ function createAnthropicAdapter() {
       case 'content_block_stop': {
         const index = data.index ?? 0;
         const tool = blocks.get(index);
+        // mcli does not send signature_delta. Devin only keeps a thinking block
+        // for the next turn when the stream carries a signature.
+        if (tool?.kind === 'thinking') {
+          return tool.signed ? [] : [chunk(event.type, { reasoning_signature: '_' })];
+        }
         // A tool call without argument deltas still needs valid JSON arguments.
         if (!tool || tool.streamed) return [];
         tool.streamed = true;

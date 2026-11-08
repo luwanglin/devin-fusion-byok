@@ -194,6 +194,7 @@ function processor(id, uid, chat, emit) {
           const delta = choice.delta || choice.message || {};
           if (delta.content) await text('chat', delta.content);
           if (delta.reasoning_content || delta.reasoning) await text('reasoning', delta.reasoning_content || delta.reasoning, false, true);
+          if (delta.reasoning_signature) await emit(thinkingChunk(id, '', delta.reasoning_signature));
           for (const tool of delta.tool_calls || []) {
             const call = getCall(tool.index ?? 0);
             if (tool.id) call.id += tool.id;
